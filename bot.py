@@ -20,7 +20,7 @@ spawned = set()
 def monitor_bosses():
     while True:
         data = fetch_boss_data()
-        if not data:
+        if not data or "bosses" not in data:
             print("⚠️ ไม่พบข้อมูลบอส")
             time.sleep(30)
             continue
@@ -28,7 +28,7 @@ def monitor_bosses():
         now = datetime.now(pytz.timezone("Asia/Bangkok"))
         now_ts = int(now.timestamp() * 1000)
 
-        for boss, info in data.items():
+        for boss, info in data["bosses"].items():
             cooldown = info.get("cooldown", 0) * 1000
             last_death = info.get("lastDeath", 0)
             spawn_time = last_death + cooldown
@@ -46,6 +46,7 @@ def monitor_bosses():
                 spawned.add(boss)
 
         time.sleep(30)
+
 
 def notify_discord(message):
     print(message)
