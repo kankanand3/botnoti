@@ -7,7 +7,7 @@ import pytz
 
 # ตั้งค่า logging
 logging.basicConfig(
-    level=logging.INFO,  # กำหนดระดับ log ที่ต้องการแสดง (เปลี่ยนเป็น logging.DEBUG เพื่อดู log เยอะขึ้น)
+    level=logging.INFO,  # เปลี่ยนเป็น logging.DEBUG เพื่อดู log เยอะขึ้น
     format='[%(asctime)s] %(levelname)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -18,7 +18,9 @@ GUARDIAN_ROLE_ID = "1377155652480401499"  # Role ID ของ @guardian
 
 notified_5_min = set()
 notified_3_min = set()
+notified_spawned = set()
 last_death_record = {}
+invalid_data_bosses = set()  # เก็บบอสที่ข้อมูลไม่ครบเพื่อไม่แจ้งซ้ำ
 
 def fetch_boss_data(retries=3, delay=5):
     for attempt in range(1, retries + 1):
@@ -45,7 +47,7 @@ def fetch_boss_data(retries=3, delay=5):
     return {}
 
 def notify_discord(message):
-    tagged_message = f"<@&{GUARDIAN_ROLE_ID}> {message}"
+    tagged_message = f"<@&{GUARDIAN_ROLE_ID}>\n\n{message}\n"
     logging.info(f"ส่งแจ้งเตือน Discord: {message}")
     try:
         response = requests.post(DISCORD_WEBHOOK_URL, json={"content": tagged_message}, timeout=10)
@@ -59,18 +61,43 @@ def format_owner(owner):
         return f"\n👑 เจ้าของบอส: **{owner.strip()}**"
     return ""
 
+def format_timestamp(ts_ms):
+    if ts_ms is None:
+        return "-"
+    tz = pytz.timezone("Asia/Bangkok")
+    dt = datetime.fromtimestamp(ts_ms / 1000, tz)
+    return dt.strftime("%H:%M น.")
+
 def process_boss(boss, info, now_ts):
     cooldown = info.get("cooldown")
     last_death = info.get("lastDeath")
     owner = info.get("owner", "").strip() if info.get("owner") else ""
 
+    # ตรวจสอบข้อมูลครบถ้วน
     if cooldown is None or last_death is None:
-        logging.warning(f"ข้อมูลบอส {boss} ไม่ครบถ้วน (cooldown หรือ lastDeath หายไป)")
+        if boss not in invalid_data_bosses:
+            logging.warning(f"ข้อมูลบอส {boss} ไม่ครบถ้วน (cooldown หรือ lastDeath หายไป)")
+            notify_discord(f"⚠️ ข้อมูลบอส **{boss}** ไม่ครบถ้วน (cooldown หรือ lastDeath หายไป) กรุณาตรวจสอบข้อมูลใน Firebase")
+            invalid_data_bosses.add(boss)
         return
+    else:
+        # ถ้าข้อมูลกลับมาครบแล้ว ให้ลบออกจาก set แจ้งเตือนข้อมูลไม่ครบ
+        if boss in invalid_data_bosses:
+            logging.info(f"ข้อมูลบอส {boss} กลับมาครบถ้วนแล้ว")
+            invalid_data_bosses.remove(boss)
 
     try:
         cooldown_ms = float(cooldown) * 1000
         last_death = int(last_death)
+
+        # ตรวจสอบ cooldown และ lastDeath ต้องเป็นค่าบวก
+        if cooldown_ms <= 0 or last_death <= 0:
+            logging.warning(f"ข้อมูลบอส {boss} ผิดพลาด: cooldown หรือ lastDeath ต้องเป็นค่าบวก")
+            if boss not in invalid_data_bosses:
+                notify_discord(f"⚠️ ข้อมูลบอส **{boss}** ผิดพลาด: cooldown หรือ lastDeath ต้องเป็นค่าบวก กรุณาตรวจสอบข้อมูลใน Firebase")
+                invalid_data_bosses.add(boss)
+            return
+
     except Exception as e:
         logging.warning(f"ข้อมูลบอส {boss} ไม่ถูกต้อง (cooldown หรือ lastDeath ไม่ใช่ตัวเลข): {e}")
         return
@@ -78,24 +105,37 @@ def process_boss(boss, info, now_ts):
     spawn_time = last_death + cooldown_ms
     time_diff = spawn_time - now_ts
 
+    spawn_time_str = format_timestamp(spawn_time)
+    last_death_str = format_timestamp(last_death)
+
+    # รีเซ็ตสถานะแจ้งเตือนเมื่อ lastDeath เปลี่ยน
     if boss not in last_death_record or last_death_record[boss] != last_death:
         notified_5_min.discard(boss)
         notified_3_min.discard(boss)
+        notified_spawned.discard(boss)
         last_death_record[boss] = last_death
         logging.info(f"รีเซ็ตสถานะแจ้งเตือนบอส {boss}")
 
     logging.debug(f"[{boss}] cooldown={cooldown_ms} ms, lastDeath={last_death}, spawn_time={spawn_time}, time_diff={time_diff} ms")
 
+    # แจ้งเตือน 5 นาที ก่อนเกิด
     if 0 <= time_diff <= 300000 and boss not in notified_5_min:
         notify_discord(
-            f"⏰ **[แจ้งเตือน]** บอส **{boss}** กำลังจะเกิดในอีก 5 นาที! เตรียมตัวให้พร้อม! ⚔️{format_owner(owner)}"
+            f"⏰ **[แจ้งเตือน]** บอส **{boss}** กำลังจะเกิดในอีก 5 นาที ({spawn_time_str})! เตรียมตัวให้พร้อม! ⚔️{format_owner(owner)}"
         )
         notified_5_min.add(boss)
+    # แจ้งเตือน 3 นาที ก่อนเกิด
     elif 0 <= time_diff <= 180000 and boss not in notified_3_min:
         notify_discord(
-            f"⌛ **[เตือนอีกครั้ง]** บอส **{boss}** กำลังจะเกิดใน 3 นาที! 🛡️ อย่าพลาดโอกาส! 🔥{format_owner(owner)}"
+            f"⌛ **[เตือนอีกครั้ง]** บอส **{boss}** กำลังจะเกิดใน 3 นาที ({spawn_time_str})! 🛡️ อย่าพลาดโอกาส! 🔥{format_owner(owner)}"
         )
         notified_3_min.add(boss)
+    # แจ้งเตือนบอสเกิดจริง
+    elif time_diff <= 0 and boss not in notified_spawned:
+        notify_discord(
+            f"🎉 **[แจ้งเตือน]** บอส **{boss}** เกิดแล้วเวลา {spawn_time_str}! พร้อมลุย! 💥{format_owner(owner)}"
+        )
+        notified_spawned.add(boss)
 
 def monitor_bosses():
     logging.info("Bot กำลังทำงาน...")
@@ -105,7 +145,7 @@ def monitor_bosses():
         bosses = fetch_boss_data()
         if not bosses:
             logging.warning("ไม่มีข้อมูลบอสในรอบนี้")
-            time.sleep(50)  # เปลี่ยนเป็น 50 วินาที
+            time.sleep(50)
             continue
 
         logging.info(f"ดึงข้อมูลบอสได้ {len(bosses)} ตัว")
@@ -118,7 +158,7 @@ def monitor_bosses():
         for boss, info in bosses.items():
             process_boss(boss, info, now_ts)
 
-        time.sleep(50)  # เปลี่ยนเป็น 50 วินาที
+        time.sleep(50)
 
 if __name__ == "__main__":
     monitor_thread = threading.Thread(target=monitor_bosses)
