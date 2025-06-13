@@ -50,6 +50,8 @@ def monitor_bosses():
 
             time_diff = spawn_time - now_ts
 
+            print(f"บอส: {boss}, lastDeath: {last_death}, cooldown(ms): {cooldown}, spawn_time: {spawn_time}, now_ts: {now_ts}, time_diff: {time_diff}")
+
             if 0 <= time_diff <= 300000 and boss not in notified_5_min:
                 notify_discord(f"🕔 อีก 5 นาที {boss} จะเกิด!")
                 notified_5_min.add(boss)
