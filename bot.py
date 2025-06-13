@@ -9,7 +9,6 @@ DISCORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1382831229681930300/
 
 notified_5_min = set()
 notified_3_min = set()
-spawned = set()
 last_death_record = {}
 
 def fetch_boss_data():
@@ -41,11 +40,10 @@ def monitor_bosses():
             last_death = info.get("lastDeath", 0)
             spawn_time = last_death + cooldown
 
-            # สูตรตรวจสอบ lastDeath เปลี่ยนแปลง รีเซ็ตสถานะ
+            # รีเซ็ตสถานะถ้า lastDeath เปลี่ยน
             if boss not in last_death_record or last_death_record[boss] != last_death:
                 notified_5_min.discard(boss)
                 notified_3_min.discard(boss)
-                spawned.discard(boss)
                 last_death_record[boss] = last_death
 
             time_diff = spawn_time - now_ts
@@ -58,9 +56,6 @@ def monitor_bosses():
             elif 0 <= time_diff <= 180000 and boss not in notified_3_min:
                 notify_discord(f"🕒 อีก 3 นาที {boss} จะเกิด!")
                 notified_3_min.add(boss)
-            elif time_diff <= 0 and boss not in spawned:
-                notify_discord(f"✅ บอส {boss} เกิดแล้ว!")
-                spawned.add(boss)
 
         time.sleep(30)
 
