@@ -47,10 +47,17 @@ def notify_discord(message):
     except Exception as e:
         print(f"❌ แจ้งเตือนไม่สำเร็จ: {e}")
 
+def format_owner(owner):
+    """ถ้ามีเจ้าของ ส่งชื่อเจ้าของให้ดูสวยงาม"""
+    if owner and owner.strip():
+        return f"\n👑 เจ้าของบอส: **{owner.strip()}**"
+    return ""
+
 def process_boss(boss, info, now_ts):
     """ประมวลผลบอสแต่ละตัว"""
     cooldown = info.get("cooldown")
     last_death = info.get("lastDeath")
+    owner = info.get("owner", "").strip() if info.get("owner") else ""
 
     if cooldown is None or last_death is None:
         print(f"⚠️ ข้อมูลบอส {boss} ไม่ครบถ้วน (cooldown หรือ lastDeath หายไป)")
@@ -63,53 +70,4 @@ def process_boss(boss, info, now_ts):
         print(f"⚠️ ข้อมูลบอส {boss} ไม่ถูกต้อง (cooldown หรือ lastDeath ไม่ใช่ตัวเลข): {e}")
         return
 
-    spawn_time = last_death + cooldown_ms
-    time_diff = spawn_time - now_ts
-
-    # รีเซ็ตสถานะแจ้งเตือนเมื่อ lastDeath เปลี่ยน
-    if boss not in last_death_record or last_death_record[boss] != last_death:
-        notified_5_min.discard(boss)
-        notified_3_min.discard(boss)
-        last_death_record[boss] = last_death
-        print(f"🔄 รีเซ็ตสถานะแจ้งเตือนบอส {boss}")
-
-    print(f"[{boss}] cooldown={cooldown_ms} ms, lastDeath={last_death}, spawn_time={spawn_time}, time_diff={time_diff} ms")
-
-    # แจ้งเตือนแค่ 5 และ 3 นาทีก่อนเกิด ด้วยข้อความที่น่าอ่านขึ้น
-    if 0 <= time_diff <= 300000 and boss not in notified_5_min:
-        notify_discord(f"⏰ [แจ้งเตือน] บอส **{boss}** จะเกิดในอีก 5 นาที! เตรียมตัวให้พร้อม! ⚔️")
-        notified_5_min.add(boss)
-    elif 0 <= time_diff <= 180000 and boss not in notified_3_min:
-        notify_discord(f"⏳ [เตือนอีกครั้ง] บอส **{boss}** กำลังจะเกิดใน 3 นาที! 🛡️ อย่าพลาดโอกาส! 🔥")
-        notified_3_min.add(boss)
-
-def monitor_bosses():
-    print("🚀 Bot กำลังทำงาน...")
-    tz = pytz.timezone("Asia/Bangkok")
-
-    while True:
-        bosses = fetch_boss_data()
-        if not bosses:
-            print("⚠️ ไม่มีข้อมูลบอสในรอบนี้")
-            time.sleep(30)
-            continue
-
-        now = datetime.now(tz)
-        now_ts = int(now.timestamp() * 1000)
-
-        for boss, info in bosses.items():
-            process_boss(boss, info, now_ts)
-
-        time.sleep(30)
-
-if __name__ == "__main__":
-    monitor_thread = threading.Thread(target=monitor_bosses)
-    monitor_thread.daemon = True
-    monitor_thread.start()
-
-    # รันไปเรื่อย ๆ
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("🛑 Bot หยุดทำงานโดยผู้ใช้")
+    spawn_time = las_
