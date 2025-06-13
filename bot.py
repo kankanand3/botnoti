@@ -6,6 +6,7 @@ import pytz
 
 FIREBASE_URL = "https://bosstimer-2a778-default-rtdb.asia-southeast1.firebasedatabase.app/.json"
 DISCORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1382831229681930300/gFhSSjfKBamc9hFGBJ7KEZOEcSpPjBmV3h8t_o5n6pGfCsIWeGFhIZbGYtF9IDlQcZOW"
+GUARDIAN_ROLE_ID = "1377155652480401499"  # Role ID ของ @guardian
 
 notified_5_min = set()
 notified_3_min = set()
@@ -36,10 +37,11 @@ def fetch_boss_data(retries=3, delay=5):
     return {}
 
 def notify_discord(message):
-    """ส่งข้อความแจ้งเตือน Discord"""
-    print(f"[แจ้งเตือน Discord] {message}")
+    """ส่งข้อความแจ้งเตือน Discord พร้อมแท็ก @guardian"""
+    tagged_message = f"<@&{GUARDIAN_ROLE_ID}> {message}"  # เพิ่มการแท็ก Role
+    print(f"[แจ้งเตือน Discord] {tagged_message}")
     try:
-        response = requests.post(DISCORD_WEBHOOK_URL, json={"content": message}, timeout=10)
+        response = requests.post(DISCORD_WEBHOOK_URL, json={"content": tagged_message}, timeout=10)
         if response.status_code != 204 and response.status_code != 200:
             print(f"❌ แจ้งเตือน Discord ไม่สำเร็จ (สถานะ {response.status_code})")
     except Exception as e:
