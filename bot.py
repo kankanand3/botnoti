@@ -105,7 +105,7 @@ def monitor_bosses():
         bosses = fetch_boss_data()
         if not bosses:
             logging.warning("ไม่มีข้อมูลบอสในรอบนี้")
-            time.sleep(30)
+            time.sleep(50)  # เปลี่ยนเป็น 50 วินาที
             continue
 
         logging.info(f"ดึงข้อมูลบอสได้ {len(bosses)} ตัว")
@@ -118,7 +118,7 @@ def monitor_bosses():
         for boss, info in bosses.items():
             process_boss(boss, info, now_ts)
 
-        time.sleep(30)
+        time.sleep(50)  # เปลี่ยนเป็น 50 วินาที
 
 if __name__ == "__main__":
     monitor_thread = threading.Thread(target=monitor_bosses)
