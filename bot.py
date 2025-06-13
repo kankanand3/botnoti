@@ -5,7 +5,12 @@ from datetime import datetime
 import pytz
 
 FIREBASE_URL = "https://bosstimer-2a778-default-rtdb.asia-southeast1.firebasedatabase.app/.json"
-DISCORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1382831229681930300/gFhSSjfKBamc9hFGBJ7KEZOEcSpPjBmV3h8t_o5n6pGfCsIWeGFhIZbGYtF9IDlQcZOW"  # <-- ใส่ Webhook ของคุณ
+DISCORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1382831229681930300/gFhSSjfKBamc9hFGBJ7KEZOEcSpPjBmV3h8t_o5n6pGfCsIWeGFhIZbGYtF9IDlQcZOW"
+
+notified_5_min = set()
+notified_3_min = set()
+spawned = set()
+last_death_record = {}
 
 def fetch_boss_data():
     response = requests.get(FIREBASE_URL)
@@ -13,9 +18,12 @@ def fetch_boss_data():
         return response.json()
     return {}
 
-notified_5_min = set()
-notified_3_min = set()
-spawned = set()
+def notify_discord(message):
+    print(message)
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
+    except Exception as e:
+        print("❌ แจ้งเตือนไม่สำเร็จ:", e)
 
 def monitor_bosses():
     while True:
@@ -33,6 +41,13 @@ def monitor_bosses():
             last_death = info.get("lastDeath", 0)
             spawn_time = last_death + cooldown
 
+            # สูตรตรวจสอบ lastDeath เปลี่ยนแปลง รีเซ็ตสถานะ
+            if boss not in last_death_record or last_death_record[boss] != last_death:
+                notified_5_min.discard(boss)
+                notified_3_min.discard(boss)
+                spawned.discard(boss)
+                last_death_record[boss] = last_death
+
             time_diff = spawn_time - now_ts
 
             if 0 <= time_diff <= 300000 and boss not in notified_5_min:
@@ -46,14 +61,6 @@ def monitor_bosses():
                 spawned.add(boss)
 
         time.sleep(30)
-
-
-def notify_discord(message):
-    print(message)
-    try:
-        requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
-    except Exception as e:
-        print("❌ แจ้งเตือนไม่สำเร็จ:", e)
 
 if __name__ == "__main__":
     print("🚀 Bot กำลังทำงาน...")
