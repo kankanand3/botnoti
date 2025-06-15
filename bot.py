@@ -108,7 +108,7 @@ def process_sword(sword, info, now_ts):
 
     try:
         last_death = int(last_death)
-        cooldown_min_ms = float(cooldown_min) * 60 * 1000
+        cooldown_min_ms = float(cooldown_min) * 1000
     except:
         return
 
@@ -120,10 +120,10 @@ def process_sword(sword, info, now_ts):
     elapsed = now_ts - last_death
     alert_stages = {
         "+0": 0,
-        "+30": 30 * 60 * 1000,
-        "+60": 60 * 60 * 1000,
-        "+90": 90 * 60 * 1000,
-        "+120": 120 * 60 * 1000,
+        "+30": 30 * 1000,
+        "+60": 60 * 1000,
+        "+90": 90 * 1000,
+        "+120": 120 * 1000,
     }
 
     for label, wait_time in alert_stages.items():
