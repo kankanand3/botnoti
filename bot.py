@@ -94,6 +94,7 @@ def process_boss(boss, info, now_ts):
         spawn_time = last_death + cooldown_ms
         diff = spawn_time - now_ts
 
+        # รีเซตสถานะเมื่อ lastDeath เปลี่ยน
         if name not in last_death_record or last_death_record[name] != last_death:
             notified_5_min.discard(name)
             notified_3_min.discard(name)
@@ -101,15 +102,18 @@ def process_boss(boss, info, now_ts):
             last_death_record[name] = last_death
             logging.info(f"Reset notify status for boss {name}")
 
+        # แจ้งเตือน 5 นาที
         if 0 <= diff <= 300000 and name not in notified_5_min:
             notify_discord(f"⏰ **[แจ้งเตือน]** บอส **{name}** จะเกิดใน 5 นาที ({format_timestamp(spawn_time)}) ⚔️{format_owner(owner)}")
             notified_5_min.add(name)
 
-        elif 0 <= diff <= 180000 and name not in notified_3_min:
+        # แจ้งเตือน 3 นาที (แยกแจ้งซ้อนกับ 5 นาทีได้)
+        if 0 <= diff <= 180000 and name not in notified_3_min:
             notify_discord(f"⌛ **[เตือนอีกครั้ง]** บอส **{name}** จะเกิดใน 3 นาที ({format_timestamp(spawn_time)}) 🛡️{format_owner(owner)}")
             notified_3_min.add(name)
 
-        elif diff <= 0 and name not in notified_spawned:
+        # แจ้งเตือนบอสเกิดแล้ว
+        if diff <= 0 and name not in notified_spawned:
             notify_discord(f"🎉 **[แจ้งเตือน]** บอส **{name}** เกิดแล้วเมื่อ {format_timestamp(spawn_time)} 💥{format_owner(owner)}")
             notified_spawned.add(name)
 
@@ -126,10 +130,11 @@ def process_sword(sword, info, now_ts):
         if last_death is None or cooldown_min is None or cooldown_max is None:
             return
 
-        last_death_ms = int(last_death) * 1000
+        last_death_ms = int(last_death)
         cooldown_min_ms = float(cooldown_min) * 1000
         cooldown_max_ms = float(cooldown_max) * 1000
 
+        # รีเซตสถานะเมื่อ lastDeath เปลี่ยน
         if name not in last_death_sword_record or last_death_sword_record[name] != last_death_ms:
             for stage_set in sword_notify_flags.values():
                 stage_set.discard(name)
@@ -147,23 +152,33 @@ def process_sword(sword, info, now_ts):
         }
 
         tz = pytz.timezone("Asia/Bangkok")
-        alert_time_str = datetime.fromtimestamp(now_ts / 1000, tz).strftime("%H:%M น.")
+        last_death_str = datetime.fromtimestamp(last_death_ms / 1000, tz).strftime("%H:%M น.")
+        cooldown_min_done_str = datetime.fromtimestamp((last_death_ms + cooldown_min_ms) / 1000, tz).strftime("%H:%M น.")
+        now_str = datetime.fromtimestamp(now_ts / 1000, tz).strftime("%H:%M น.")
 
         for label, wait_time in alert_stages.items():
             if elapsed >= wait_time and name not in sword_notify_flags[label]:
                 if label == "+max":
-                    notify_sword_discord(
-                        f"🗡️ บอสดาบ! {name}\n\n🕓 ผ่านมาแล้ว {int(wait_time/60000)} นาที หลังบอสตาย (แจ้งเมื่อเวลา {alert_time_str})\n\n⚠️ หากยังไม่เกิด แสดงว่า ถูกฆ่าไปแล้ว"
+                    message = (
+                        f"🗡️ บอสดาบ! {name}\n\n"
+                        f"🕒 บอสตายล่าสุด: {last_death_str}\n"
+                        f"⏳ คูลดาวน์ขั้นต่ำครบเวลา: {cooldown_min_done_str}\n"
+                        f"🕔 แจ้งเตือนตอนนี้: {now_str} (ผ่านมา {int((wait_time - cooldown_min_ms) / 60000)} นาทีหลัง cooldown ขั้นต่ำ)\n\n"
+                        f"⚠️ หากยังไม่เกิด แสดงว่า ถูกฆ่าไปแล้ว"
                     )
                 else:
-                    minutes_passed = 0
+                    # แก้ตรงนี้ให้ +0 แจ้งผ่าน 0 นาที (คูลดาวน์ขั้นต่ำครบพอดี)
                     if label == "+0":
-                        minutes_passed = int(cooldown_min_ms / 60000)
+                        minutes_passed = 0
                     else:
                         minutes_passed = int(label[1:])
-                    notify_sword_discord(
-                        f"🗡️ บอสดาบ! {name}\n\n⏳ ผ่านมาแล้ว {minutes_passed} นาที หลังครบ cooldown ขั้นต่ำ (แจ้งเมื่อเวลา {alert_time_str})"
+                    message = (
+                        f"🗡️ บอสดาบ! {name}\n\n"
+                        f"🕒 บอสตายล่าสุด: {last_death_str}\n"
+                        f"⏳ คูลดาวน์ขั้นต่ำครบเวลา: {cooldown_min_done_str}\n"
+                        f"🕔 แจ้งเตือนตอนนี้: {now_str} (ผ่านมา {minutes_passed} นาทีหลัง cooldown ขั้นต่ำ)"
                     )
+                notify_sword_discord(message)
                 sword_notify_flags[label].add(name)
 
     except Exception as e:
