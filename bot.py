@@ -6,159 +6,188 @@ from datetime import datetime
 import pytz
 import re
 
-# Logging
+# Logging Setup
 logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s] %(levelname)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
+# Config
 FIREBASE_URL = "https://bosstimer-2a778-default-rtdb.asia-southeast1.firebasedatabase.app/.json"
 DISCORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1382831229681930300/gFhSSjfKBamc9hFGBJ7KEZOEcSpPjBmV3h8t_o5n6pGfCsIWeGFhIZbGYtF9IDlQcZOW"
 DISCORD_SWORD_WEBHOOK_URL = "https://ptb.discord.com/api/webhooks/1383767117198790727/PKfhWSBQRglLAKYQprS9DVmkh-xVJ3lRmEKWzPqp_VWqIrLqafFoWJrbLlsn7v9lRem-"
 GUARDIAN_ROLE_ID = "1377155652480401499"
 
+# State Tracking
 notified_5_min = set()
 notified_3_min = set()
 notified_spawned = set()
 last_death_record = {}
-invalid_data_bosses = set()
 
 sword_notify_flags = {
     "+0": set(),
     "+30": set(),
     "+60": set(),
     "+90": set(),
-    "+120": set(),
+    "+max": set(),
 }
 last_death_sword_record = {}
 
 def sanitize_boss_name(name):
+    """ลบอักขระพิเศษไม่ต้องการ อนุญาตเฉพาะตัวอักษร ก-ฮ, 0-9, a-z, A-Z และช่องว่าง"""
     return re.sub(r'[^\w\sก-๙]', '', name).strip()
 
 def fetch_boss_data(retries=3, delay=5):
+    """ดึงข้อมูลจาก Firebase, retry กรณี error"""
     for attempt in range(retries):
         try:
             response = requests.get(FIREBASE_URL, timeout=10)
             if response.status_code == 200:
                 data = response.json()
+                logging.info("Fetched data from Firebase successfully.")
                 return data
+            else:
+                logging.warning(f"Firebase response status: {response.status_code}")
         except Exception as e:
             logging.error(f"Fetch failed: {e}")
         time.sleep(delay)
+    logging.error("Failed to fetch data from Firebase after retries.")
     return {}
 
 def notify_discord(message):
+    """ส่งข้อความแจ้งเตือนบอสปกติไป Discord"""
     tagged = f"<@&{GUARDIAN_ROLE_ID}>\n\n{message}"
-    requests.post(DISCORD_WEBHOOK_URL, json={"content": tagged}, timeout=10)
+    try:
+        response = requests.post(DISCORD_WEBHOOK_URL, json={"content": tagged}, timeout=10)
+        response.raise_for_status()
+        logging.info(f"Notify Discord: {message}")
+    except Exception as e:
+        logging.error(f"Failed to notify Discord: {e}")
 
 def notify_sword_discord(message):
+    """ส่งข้อความแจ้งเตือนบอสดาบไป Discord"""
     tagged = f"<@&{GUARDIAN_ROLE_ID}>\n\n{message}"
-    requests.post(DISCORD_SWORD_WEBHOOK_URL, json={"content": tagged}, timeout=10)
+    try:
+        response = requests.post(DISCORD_SWORD_WEBHOOK_URL, json={"content": tagged}, timeout=10)
+        response.raise_for_status()
+        logging.info(f"Notify Sword Discord: {message}")
+    except Exception as e:
+        logging.error(f"Failed to notify Sword Discord: {e}")
 
 def format_owner(owner):
+    """ฟอร์แมตข้อความเจ้าของบอส ถ้าไม่มี owner ให้ return ค่าว่าง"""
     return f"\n\n👑 เจ้าของบอส: **{owner.strip()}**" if owner else ""
 
 def format_timestamp(ts_ms):
+    """แปลง timestamp (ms) เป็นเวลาท้องถิ่น Asia/Bangkok"""
     tz = pytz.timezone("Asia/Bangkok")
     return datetime.fromtimestamp(ts_ms / 1000, tz).strftime("%H:%M น.")
 
 def process_boss(boss, info, now_ts):
-    name = sanitize_boss_name(boss)
-    cooldown = info.get("cooldown")
-    last_death = info.get("lastDeath")
-    owner = info.get("owner", "")
-
-    if cooldown is None or last_death is None:
-        return
-
+    """ประมวลผลบอสปกติ แจ้งเตือนตาม cooldown"""
     try:
+        name = sanitize_boss_name(boss)
+        cooldown = info.get("cooldown")
+        last_death = info.get("lastDeath")
+        owner = info.get("owner", "")
+
+        if cooldown is None or last_death is None:
+            return
+
         cooldown_ms = float(cooldown) * 1000
         last_death = int(last_death)
-    except:
-        return
 
-    spawn_time = last_death + cooldown_ms
-    diff = spawn_time - now_ts
+        spawn_time = last_death + cooldown_ms
+        diff = spawn_time - now_ts
 
-    if name not in last_death_record or last_death_record[name] != last_death:
-        notified_5_min.discard(name)
-        notified_3_min.discard(name)
-        notified_spawned.discard(name)
-        last_death_record[name] = last_death
+        # รีเซตสถานะแจ้งเตือนเมื่อบอสตายใหม่
+        if name not in last_death_record or last_death_record[name] != last_death:
+            notified_5_min.discard(name)
+            notified_3_min.discard(name)
+            notified_spawned.discard(name)
+            last_death_record[name] = last_death
+            logging.info(f"Reset notify status for boss {name}")
 
-    if 0 <= diff <= 300000 and name not in notified_5_min:
-        notify_discord(f"⏰ **[แจ้งเตือน]** บอส **{name}** จะเกิดใน 5 นาที ({format_timestamp(spawn_time)}) ⚔️{format_owner(owner)}")
-        notified_5_min.add(name)
+        if 0 <= diff <= 300000 and name not in notified_5_min:
+            notify_discord(f"⏰ **[แจ้งเตือน]** บอส **{name}** จะเกิดใน 5 นาที ({format_timestamp(spawn_time)}) ⚔️{format_owner(owner)}")
+            notified_5_min.add(name)
 
-    elif 0 <= diff <= 180000 and name not in notified_3_min:
-        notify_discord(f"⌛ **[เตือนอีกครั้ง]** บอส **{name}** จะเกิดใน 3 นาที ({format_timestamp(spawn_time)}) 🛡️{format_owner(owner)}")
-        notified_3_min.add(name)
+        elif 0 <= diff <= 180000 and name not in notified_3_min:
+            notify_discord(f"⌛ **[เตือนอีกครั้ง]** บอส **{name}** จะเกิดใน 3 นาที ({format_timestamp(spawn_time)}) 🛡️{format_owner(owner)}")
+            notified_3_min.add(name)
 
-    elif diff <= 0 and name not in notified_spawned:
-        notify_discord(f"🎉 **[แจ้งเตือน]** บอส **{name}** เกิดแล้วเมื่อ {format_timestamp(spawn_time)} 💥{format_owner(owner)}")
-        notified_spawned.add(name)
+        elif diff <= 0 and name not in notified_spawned:
+            notify_discord(f"🎉 **[แจ้งเตือน]** บอส **{name}** เกิดแล้วเมื่อ {format_timestamp(spawn_time)} 💥{format_owner(owner)}")
+            notified_spawned.add(name)
+
+    except Exception as e:
+        logging.error(f"Error processing boss {boss}: {e}")
 
 def process_sword(sword, info, now_ts):
-    name = sanitize_boss_name(sword)
-    last_death = info.get("lastDeath")
-    cooldown_min = info.get("cooldownMin")
-    cooldown_max = info.get("cooldownMax")
-
-    if last_death is None or cooldown_min is None or cooldown_max is None:
-        return
-
+    """ประมวลผลบอสดาบ แจ้งเตือนตาม cooldown min, max และช่วงเวลาที่กำหนด"""
     try:
-        # แปลงวินาทีเป็นมิลลิวินาที
+        name = sanitize_boss_name(sword)
+        last_death = info.get("lastDeath")
+        cooldown_min = info.get("cooldownMin")
+        cooldown_max = info.get("cooldownMax")
+
+        if last_death is None or cooldown_min is None or cooldown_max is None:
+            return
+
         last_death_ms = int(last_death) * 1000
         cooldown_min_ms = float(cooldown_min) * 1000
         cooldown_max_ms = float(cooldown_max) * 1000
-    except:
-        return
 
-    # รีเซตสถานะแจ้งเตือนหากบอสตายครั้งล่าสุดเปลี่ยน
-    if name not in last_death_sword_record or last_death_sword_record[name] != last_death_ms:
-        for stage_set in sword_notify_flags.values():
-            stage_set.discard(name)
-        last_death_sword_record[name] = last_death_ms
+        # รีเซตสถานะแจ้งเตือนหากบอสตายล่าสุดเปลี่ยน
+        if name not in last_death_sword_record or last_death_sword_record[name] != last_death_ms:
+            for stage_set in sword_notify_flags.values():
+                stage_set.discard(name)
+            last_death_sword_record[name] = last_death_ms
+            logging.info(f"Reset sword notify status for {name}")
 
-    elapsed = now_ts - last_death_ms  # เวลา ms ที่ผ่านไปหลังบอสตาย
+        elapsed = now_ts - last_death_ms  # เวลา ms ที่ผ่านไปหลังบอสตาย
 
-    alert_stages = {
-        "+0": cooldown_min_ms,
-        "+30": cooldown_min_ms + 30 * 60 * 1000,
-        "+60": cooldown_min_ms + 60 * 60 * 1000,
-        "+90": cooldown_min_ms + 90 * 60 * 1000,
-        "+max": cooldown_max_ms,
-    }
+        alert_stages = {
+            "+0": cooldown_min_ms,
+            "+30": cooldown_min_ms + 30 * 60 * 1000,
+            "+60": cooldown_min_ms + 60 * 60 * 1000,
+            "+90": cooldown_min_ms + 90 * 60 * 1000,
+            "+max": cooldown_max_ms,
+        }
 
-    tz = pytz.timezone("Asia/Bangkok")
-    alert_time_str = datetime.fromtimestamp(now_ts / 1000, tz).strftime("%H:%M น.")
+        tz = pytz.timezone("Asia/Bangkok")
+        alert_time_str = datetime.fromtimestamp(now_ts / 1000, tz).strftime("%H:%M น.")
 
-    for label, wait_time in alert_stages.items():
-        if elapsed >= wait_time and name not in sword_notify_flags[label]:
-            if label == "+max":
-                notify_sword_discord(
-                    f"🗡️ บอสดาบ! {name}\n\n🕓 ผ่านมาแล้ว {int(wait_time/60000)} นาที หลังบอสตาย (แจ้งเมื่อเวลา {alert_time_str})\n\n⚠️ หากยังไม่เกิด แสดงว่า ถูกฆ่าไปแล้ว"
-                )
-            else:
-                minutes_passed = 0
-                if label == "+0":
-                    minutes_passed = int(cooldown_min_ms / 60000)
+        for label, wait_time in alert_stages.items():
+            if elapsed >= wait_time and name not in sword_notify_flags[label]:
+                if label == "+max":
+                    notify_sword_discord(
+                        f"🗡️ บอสดาบ! {name}\n\n🕓 ผ่านมาแล้ว {int(wait_time/60000)} นาที หลังบอสตาย (แจ้งเมื่อเวลา {alert_time_str})\n\n⚠️ หากยังไม่เกิด แสดงว่า ถูกฆ่าไปแล้ว"
+                    )
                 else:
-                    minutes_passed = int(label[1:])
-                notify_sword_discord(
-                    f"🗡️ บอสดาบ! {name}\n\n⏳ ผ่านมาแล้ว {minutes_passed} นาที หลังครบ cooldown ขั้นต่ำ (แจ้งเมื่อเวลา {alert_time_str})"
-                )
-            sword_notify_flags[label].add(name)
+                    minutes_passed = 0
+                    if label == "+0":
+                        minutes_passed = int(cooldown_min_ms / 60000)
+                    else:
+                        minutes_passed = int(label[1:])
+                    notify_sword_discord(
+                        f"🗡️ บอสดาบ! {name}\n\n⏳ ผ่านมาแล้ว {minutes_passed} นาที หลังครบ cooldown ขั้นต่ำ (แจ้งเมื่อเวลา {alert_time_str})"
+                    )
+                sword_notify_flags[label].add(name)
 
+    except Exception as e:
+        logging.error(f"Error processing sword {sword}: {e}")
 
 def monitor_bosses():
     tz = pytz.timezone("Asia/Bangkok")
     while True:
         data = fetch_boss_data()
         now_ts = int(datetime.now(tz).timestamp() * 1000)
-        for boss, info in data.get("bosses", {}).items():
+        bosses = data.get("bosses", {})
+        if not bosses:
+            logging.warning("No bosses data found in Firebase.")
+        for boss, info in bosses.items():
             process_boss(boss, info, now_ts)
         time.sleep(30)
 
@@ -167,11 +196,15 @@ def monitor_swords():
     while True:
         data = fetch_boss_data()
         now_ts = int(datetime.now(tz).timestamp() * 1000)
-        for sword, info in data.get("swords", {}).items():
+        swords = data.get("swords", {})
+        if not swords:
+            logging.warning("No swords data found in Firebase.")
+        for sword, info in swords.items():
             process_sword(sword, info, now_ts)
         time.sleep(30)
 
 if __name__ == "__main__":
+    logging.info("Starting boss monitor...")
     threading.Thread(target=monitor_bosses, daemon=True).start()
     threading.Thread(target=monitor_swords, daemon=True).start()
     try:
