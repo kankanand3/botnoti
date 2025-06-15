@@ -1,10 +1,10 @@
 import logging
 import time
 import requests
-import threading
 from datetime import datetime
 import pytz
 import re
+import threading
 
 # Logging Setup
 logging.basicConfig(
@@ -35,11 +35,9 @@ sword_notify_flags = {
 last_death_sword_record = {}
 
 def sanitize_boss_name(name):
-    """ลบอักขระพิเศษไม่ต้องการ อนุญาตเฉพาะตัวอักษร ก-ฮ, 0-9, a-z, A-Z และช่องว่าง"""
     return re.sub(r'[^\w\sก-๙]', '', name).strip()
 
 def fetch_boss_data(retries=3, delay=5):
-    """ดึงข้อมูลจาก Firebase, retry กรณี error"""
     for attempt in range(retries):
         try:
             response = requests.get(FIREBASE_URL, timeout=10)
@@ -56,7 +54,6 @@ def fetch_boss_data(retries=3, delay=5):
     return {}
 
 def notify_discord(message):
-    """ส่งข้อความแจ้งเตือนบอสปกติไป Discord"""
     tagged = f"<@&{GUARDIAN_ROLE_ID}>\n\n{message}"
     try:
         response = requests.post(DISCORD_WEBHOOK_URL, json={"content": tagged}, timeout=10)
@@ -66,7 +63,6 @@ def notify_discord(message):
         logging.error(f"Failed to notify Discord: {e}")
 
 def notify_sword_discord(message):
-    """ส่งข้อความแจ้งเตือนบอสดาบไป Discord"""
     tagged = f"<@&{GUARDIAN_ROLE_ID}>\n\n{message}"
     try:
         response = requests.post(DISCORD_SWORD_WEBHOOK_URL, json={"content": tagged}, timeout=10)
@@ -76,16 +72,13 @@ def notify_sword_discord(message):
         logging.error(f"Failed to notify Sword Discord: {e}")
 
 def format_owner(owner):
-    """ฟอร์แมตข้อความเจ้าของบอส ถ้าไม่มี owner ให้ return ค่าว่าง"""
     return f"\n\n👑 เจ้าของบอส: **{owner.strip()}**" if owner else ""
 
 def format_timestamp(ts_ms):
-    """แปลง timestamp (ms) เป็นเวลาท้องถิ่น Asia/Bangkok"""
     tz = pytz.timezone("Asia/Bangkok")
     return datetime.fromtimestamp(ts_ms / 1000, tz).strftime("%H:%M น.")
 
 def process_boss(boss, info, now_ts):
-    """ประมวลผลบอสปกติ แจ้งเตือนตาม cooldown"""
     try:
         name = sanitize_boss_name(boss)
         cooldown = info.get("cooldown")
@@ -101,7 +94,6 @@ def process_boss(boss, info, now_ts):
         spawn_time = last_death + cooldown_ms
         diff = spawn_time - now_ts
 
-        # รีเซตสถานะแจ้งเตือนเมื่อบอสตายใหม่
         if name not in last_death_record or last_death_record[name] != last_death:
             notified_5_min.discard(name)
             notified_3_min.discard(name)
@@ -125,7 +117,6 @@ def process_boss(boss, info, now_ts):
         logging.error(f"Error processing boss {boss}: {e}")
 
 def process_sword(sword, info, now_ts):
-    """ประมวลผลบอสดาบ แจ้งเตือนตาม cooldown min, max และช่วงเวลาที่กำหนด"""
     try:
         name = sanitize_boss_name(sword)
         last_death = info.get("lastDeath")
@@ -139,14 +130,13 @@ def process_sword(sword, info, now_ts):
         cooldown_min_ms = float(cooldown_min) * 1000
         cooldown_max_ms = float(cooldown_max) * 1000
 
-        # รีเซตสถานะแจ้งเตือนหากบอสตายล่าสุดเปลี่ยน
         if name not in last_death_sword_record or last_death_sword_record[name] != last_death_ms:
             for stage_set in sword_notify_flags.values():
                 stage_set.discard(name)
             last_death_sword_record[name] = last_death_ms
             logging.info(f"Reset sword notify status for {name}")
 
-        elapsed = now_ts - last_death_ms  # เวลา ms ที่ผ่านไปหลังบอสตาย
+        elapsed = now_ts - last_death_ms
 
         alert_stages = {
             "+0": cooldown_min_ms,
@@ -179,36 +169,34 @@ def process_sword(sword, info, now_ts):
     except Exception as e:
         logging.error(f"Error processing sword {sword}: {e}")
 
-def monitor_bosses():
+def monitor_all():
     tz = pytz.timezone("Asia/Bangkok")
     while True:
         data = fetch_boss_data()
         now_ts = int(datetime.now(tz).timestamp() * 1000)
+
         bosses = data.get("bosses", {})
+        swords = data.get("swords", {})
+
         if not bosses:
             logging.warning("No bosses data found in Firebase.")
-        for boss, info in bosses.items():
-            process_boss(boss, info, now_ts)
-        time.sleep(30)
+        else:
+            for boss, info in bosses.items():
+                process_boss(boss, info, now_ts)
 
-def monitor_swords():
-    tz = pytz.timezone("Asia/Bangkok")
-    while True:
-        data = fetch_boss_data()
-        now_ts = int(datetime.now(tz).timestamp() * 1000)
-        swords = data.get("swords", {})
         if not swords:
             logging.warning("No swords data found in Firebase.")
-        for sword, info in swords.items():
-            process_sword(sword, info, now_ts)
+        else:
+            for sword, info in swords.items():
+                process_sword(sword, info, now_ts)
+
         time.sleep(30)
 
 if __name__ == "__main__":
-    logging.info("Starting boss monitor...")
-    threading.Thread(target=monitor_bosses, daemon=True).start()
-    threading.Thread(target=monitor_swords, daemon=True).start()
+    logging.info("Starting boss monitor (single thread fetch)...")
+    threading.Thread(target=monitor_all, daemon=True).start()
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logging.info("🛑 หยุดทำงานแล้ว")
+        logging.info("🛑 Stopped")
