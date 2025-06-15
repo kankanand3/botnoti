@@ -103,12 +103,15 @@ def process_sword(sword, info, now_ts):
     name = sanitize_boss_name(sword)
     last_death = info.get("lastDeath")
     cooldown_min = info.get("cooldownMin")
-    if last_death is None or cooldown_min is None:
+    cooldown_max = info.get("cooldownMax")  # เพิ่ม cooldownMax
+
+    if last_death is None or cooldown_min is None or cooldown_max is None:
         return
 
     try:
         last_death = int(last_death)
         cooldown_min_ms = float(cooldown_min) * 1000
+        cooldown_max_ms = float(cooldown_max) * 1000
     except:
         return
 
@@ -118,25 +121,27 @@ def process_sword(sword, info, now_ts):
         last_death_sword_record[name] = last_death
 
     elapsed = now_ts - last_death
+
     alert_stages = {
-        "+0": 0,
-        "+30": 30 * 1000,
-        "+60": 60 * 1000,
-        "+90": 90 * 1000,
-        "+120": 120 * 1000,
+        "+60": 60 * 60 * 1000,    # 60 นาที หลัง lastDeath
+        "+90": 90 * 60 * 1000,    # 90 นาที หลัง lastDeath
+        "+120": cooldown_max_ms,  # 120 นาที (max cooldown) หลัง lastDeath
     }
 
     for label, wait_time in alert_stages.items():
-        if elapsed >= cooldown_min_ms + wait_time and name not in sword_notify_flags[label]:
+        if elapsed >= wait_time and name not in sword_notify_flags[label]:
+            alert_time_str = datetime.fromtimestamp(now_ts / 1000, pytz.timezone("Asia/Bangkok")).strftime("%H:%M น.")
             if label == "+120":
                 notify_sword_discord(
-                    f"🗡️ **บอสดาบ!** {name}\n\n🕓 ผ่านมาแล้ว **120 นาที** หลังครบ cooldown.\n\n⚠️ หากยังไม่เกิด แสดงว่า **ถูกฆ่าไปแล้ว**"
+                    f"🗡️ บอสดาบ! {name}\n\n🕓 ผ่านมาแล้ว 120 นาที หลังบอสตาย (แจ้งเมื่อเวลา {alert_time_str})\n\n⚠️ หากยังไม่เกิด แสดงว่า ถูกฆ่าไปแล้ว"
                 )
             else:
+                minutes_passed = int(label[1:])
                 notify_sword_discord(
-                    f"🗡️ **บอสดาบ!** {name}\n\n⏳ ผ่านมาแล้ว **{label[1:]} นาที** หลังครบ cooldown."
+                    f"🗡️ บอสดาบ! {name}\n\n⏳ ผ่านมาแล้ว {minutes_passed} นาที หลังบอสตาย (แจ้งเมื่อเวลา {alert_time_str})"
                 )
             sword_notify_flags[label].add(name)
+
 
 def monitor_bosses():
     tz = pytz.timezone("Asia/Bangkok")
