@@ -103,42 +103,52 @@ def process_sword(sword, info, now_ts):
     name = sanitize_boss_name(sword)
     last_death = info.get("lastDeath")
     cooldown_min = info.get("cooldownMin")
-    cooldown_max = info.get("cooldownMax")  # เพิ่ม cooldownMax
+    cooldown_max = info.get("cooldownMax")
 
     if last_death is None or cooldown_min is None or cooldown_max is None:
         return
 
     try:
-        last_death = int(last_death)
+        # แปลงวินาทีเป็นมิลลิวินาที
+        last_death_ms = int(last_death) * 1000
         cooldown_min_ms = float(cooldown_min) * 1000
         cooldown_max_ms = float(cooldown_max) * 1000
     except:
         return
 
-    if name not in last_death_sword_record or last_death_sword_record[name] != last_death:
-        for stage in sword_notify_flags:
-            sword_notify_flags[stage].discard(name)
-        last_death_sword_record[name] = last_death
+    # รีเซตสถานะแจ้งเตือนหากบอสตายครั้งล่าสุดเปลี่ยน
+    if name not in last_death_sword_record or last_death_sword_record[name] != last_death_ms:
+        for stage_set in sword_notify_flags.values():
+            stage_set.discard(name)
+        last_death_sword_record[name] = last_death_ms
 
-    elapsed = now_ts - last_death
+    elapsed = now_ts - last_death_ms  # เวลา ms ที่ผ่านไปหลังบอสตาย
 
     alert_stages = {
-        "+60": 60 * 60 * 1000,    # 60 นาที หลัง lastDeath
-        "+90": 90 * 60 * 1000,    # 90 นาที หลัง lastDeath
-        "+120": cooldown_max_ms,  # 120 นาที (max cooldown) หลัง lastDeath
+        "+0": cooldown_min_ms,
+        "+30": cooldown_min_ms + 30 * 60 * 1000,
+        "+60": cooldown_min_ms + 60 * 60 * 1000,
+        "+90": cooldown_min_ms + 90 * 60 * 1000,
+        "+max": cooldown_max_ms,
     }
+
+    tz = pytz.timezone("Asia/Bangkok")
+    alert_time_str = datetime.fromtimestamp(now_ts / 1000, tz).strftime("%H:%M น.")
 
     for label, wait_time in alert_stages.items():
         if elapsed >= wait_time and name not in sword_notify_flags[label]:
-            alert_time_str = datetime.fromtimestamp(now_ts / 1000, pytz.timezone("Asia/Bangkok")).strftime("%H:%M น.")
-            if label == "+120":
+            if label == "+max":
                 notify_sword_discord(
-                    f"🗡️ บอสดาบ! {name}\n\n🕓 ผ่านมาแล้ว 120 นาที หลังบอสตาย (แจ้งเมื่อเวลา {alert_time_str})\n\n⚠️ หากยังไม่เกิด แสดงว่า ถูกฆ่าไปแล้ว"
+                    f"🗡️ บอสดาบ! {name}\n\n🕓 ผ่านมาแล้ว {int(wait_time/60000)} นาที หลังบอสตาย (แจ้งเมื่อเวลา {alert_time_str})\n\n⚠️ หากยังไม่เกิด แสดงว่า ถูกฆ่าไปแล้ว"
                 )
             else:
-                minutes_passed = int(label[1:])
+                minutes_passed = 0
+                if label == "+0":
+                    minutes_passed = int(cooldown_min_ms / 60000)
+                else:
+                    minutes_passed = int(label[1:])
                 notify_sword_discord(
-                    f"🗡️ บอสดาบ! {name}\n\n⏳ ผ่านมาแล้ว {minutes_passed} นาที หลังบอสตาย (แจ้งเมื่อเวลา {alert_time_str})"
+                    f"🗡️ บอสดาบ! {name}\n\n⏳ ผ่านมาแล้ว {minutes_passed} นาที หลังครบ cooldown ขั้นต่ำ (แจ้งเมื่อเวลา {alert_time_str})"
                 )
             sword_notify_flags[label].add(name)
 
